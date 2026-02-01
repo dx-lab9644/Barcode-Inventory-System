@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>バーコードスキャナー</title>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    body { 
+      padding: 20px; 
+      font-family: Arial; 
+      font-size: 32px;
+    }
+    h1 {
+      font-size: 44px;
+      margin-bottom: 20px;
+    }
+    #reader {
+      width: 100%;
+    }
+    button { 
+      padding: 20px 35px; 
+      font-size: 32px;
+      cursor: pointer;
+    }
+    #startBtn, #stopBtn {
+      margin: 15px 5px;
+    }
+    #confirmation { 
+      display: none; 
+      background: #e8f5e9; 
+      padding: 35px; 
+      margin-top: 30px;
+      font-size: 32px;
+    }
+    #confirmation h3 {
+      font-size: 40px;
+      margin-bottom: 25px;
+    }
+    #confirmation p {
+      font-size: 32px;
+      margin-bottom: 30px;
+    }
+    #confirmation label {
+      font-size: 32px;
+    }
+    #confirmation input {
+      font-size: 36px;
+      padding: 12px;
+      width: 140px;
+    }
+    .button-row {
+      margin-top: 90px;
+    }
+    .button-row button {
+      margin: 10px 20px;
+    }
+    #barcodeList {
+      margin-top: 30px;
+      background: #f0f0f0;
+      padding: 20px;
+      border-radius: 5px;
+    }
+    #barcodeList h3 {
+      font-size: 36px;
+      margin-bottom: 15px;
+    }
+    .list-item {
+      background: white;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 5px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 28px;
+    }
+    .item-info {
+      flex: 1;
+    }
+    .item-buttons {
+      display: flex;
+      gap: 10px;
+    }
+    .edit-btn {
+      background: #2196F3;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      font-size: 24px;
+    }
+    .delete-btn {
+      background: #f44336;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      font-size: 24px;
+    }
+    #batchRegisterBtn {
+      background: #4CAF50;
+      color: white;
+      border: none;
+      width: 100%;
+      margin-top: 20px;
+      padding: 25px;
+      font-size: 36px;
+    }
+    #result {
+      font-size: 28px;
+      margin-top: 30px;
+    }
+  </style>
+</head>
+<body>
+  <h1>バーコードスキャナー</h1>
+  
+  <div id="reader"></div>
+  <button id="startBtn" onclick="startCamera()">カメラ起動</button>
+  <button id="stopBtn" onclick="stopCamera()" style="display:none;">カメラ停止</button>
+  
+  <div id="confirmation">
+    <h3>読み取り結果</h3>
+    <p>バーコード: <strong id="barcode"></strong></p>
+    <p>品名: <strong id="productName">取得中...</strong></p>
+    <label>数量: <input type="number" id="quantity" value="1"></label>
+    <div class="button-row">
+      <button onclick="register()">登録</button>
+      <button onclick="addToList()">リストに追加</button>
+      <button onclick="cancel()">キャンセル</button>
+    </div>
+  </div>
+  
+  <div id="barcodeList" style="display:none;">
+    <h3>読み取りリスト (<span id="listCount">0</span>件)</h3>
+    <div id="listItems"></div>
+    <button id="batchRegisterBtn" onclick="batchRegister()">一括登録</button>
+  </div>
+  
+  <div id="result"></div>
+  
+  <script>
+    let html5QrCode;
+    let lastBarcode = '';
+    let lastProductName = '';
+    let barcodeArray = [];
+    let isScanning = false;
+    
+    function startCamera() {
+      html5QrCode = new Html5Qrcode("reader");
+      html5QrCode.start(
+        { facingMode: "environment" },
+        { 
+          fps: 10,  // 読み込み速度を軽量化
+          qrbox: { width: 400, height: 200 }  // 読み取り領域を適度なサイズに
+        },
+        onScan
+      ).then(() => {
+        isScanning = true;
+        document.getElementById('startBtn').style.display = 'none';
+        document.getElementById('stopBtn').style.display = 'inline-block';
+      }).catch(err => {
+        alert('カメラエラー: ' + err);
+      });
+    }
+    
+    function stopCamera() {
+      html5QrCode.stop().then(() => {
+        isScanning = false;
+        document.getElementById('startBtn').style.display = 'inline-block';
+        document.getElementById('stopBtn').style.display = 'none';
+      });
+    }
+    
+    function onScan(decodedText) {
+      lastBarcode = decodedText;
+      document.getElementById('barcode').textContent = decodedText;
+      document.getElementById('productName').textContent = '取得中...';
+      document.getElementById('confirmation').style.display = 'block';
+      document.getElementById('quantity').value = 1;
+      html5QrCode.pause();
+      
+      // 品名を取得
+      google.script.run
+        .withSuccessHandler((productName) => {
+          lastProductName = productName;
+          document.getElementById('productName').textContent = productName;
+        })
+        .withFailureHandler((err) => {
+          lastProductName = 'エラー';
+          document.getElementById('productName').textContent = 'エラー';
+        })
+        .getProductName(decodedText);
+    }
+    
+    function register() {
+      const qty = parseInt(document.getElementById('quantity').value);
+      if (isNaN(qty)) {
+        alert('数量を入力してください');
+        return;
+      }
+      
+      document.getElementById('result').innerHTML = '登録中...';
+      
+      google.script.run
+        .withSuccessHandler(() => {
+          document.getElementById('result').innerHTML = '登録完了!';
+          document.getElementById('confirmation').style.display = 'none';
+          html5QrCode.resume();
+        })
+        .withFailureHandler((err) => {
+          alert('登録エラー: ' + err);
+          document.getElementById('confirmation').style.display = 'none';
+          html5QrCode.resume();
+        })
+        .addBarcodeWithQuantity(lastBarcode, qty);
+    }
+    
+    function addToList() {
+      const qty = parseInt(document.getElementById('quantity').value);
+      if (isNaN(qty)) {
+        alert('数量を入力してください');
+        return;
+      }
+      
+      barcodeArray.push({
+        barcode: lastBarcode,
+        productName: lastProductName,
+        quantity: qty
+      });
+      
+      updateList();
+      document.getElementById('confirmation').style.display = 'none';
+      document.getElementById('result').innerHTML = 'リストに追加しました';
+      html5QrCode.resume();
+    }
+    
+    function updateList() {
+      const listDiv = document.getElementById('barcodeList');
+      const itemsDiv = document.getElementById('listItems');
+      const countSpan = document.getElementById('listCount');
+      
+      if (barcodeArray.length === 0) {
+        listDiv.style.display = 'none';
+        return;
+      }
+      
+      listDiv.style.display = 'block';
+      countSpan.textContent = barcodeArray.length;
+      
+      itemsDiv.innerHTML = '';
+      barcodeArray.forEach((item, index) => {
+        const div = document.createElement('div');
+        div.className = 'list-item';
+        div.innerHTML = `
+          <div class="item-info">
+            <div>${item.productName}</div>
+            <div style="font-size: 24px; color: #666;">
+              ${item.barcode} (数量: ${item.quantity})
+            </div>
+          </div>
+          <div class="item-buttons">
+            <button class="edit-btn" onclick="editItem(${index})">修正</button>
+            <button class="delete-btn" onclick="deleteItem(${index})">削除</button>
+          </div>
+        `;
+        itemsDiv.appendChild(div);
+      });
+    }
+    
+    function editItem(index) {
+      const currentQty = barcodeArray[index].quantity;
+      const newQty = prompt('新しい数量を入力してください:', currentQty);
+      
+      if (newQty === null) return;
+      
+      const qty = parseInt(newQty);
+      if (isNaN(qty)) {
+        alert('数値を入力してください');
+        return;
+      }
+      
+      barcodeArray[index].quantity = qty;
+      updateList();
+    }
+    
+    function deleteItem(index) {
+      barcodeArray.splice(index, 1);
+      updateList();
+    }
+    
+    function batchRegister() {
+      if (barcodeArray.length === 0) {
+        alert('登録するデータがありません');
+        return;
+      }
+      
+      document.getElementById('result').innerHTML = '一括登録中...';
+      
+      google.script.run
+        .withSuccessHandler((result) => {
+          document.getElementById('result').innerHTML = result;
+          barcodeArray = [];
+          updateList();
+          
+          // カメラを完全に再起動
+          if (html5QrCode && isScanning) {
+            html5QrCode.stop().then(() => {
+              // 少し待ってから再起動
+              setTimeout(() => {
+                startCamera();
+              }, 500);
+            });
+          }
+        })
+        .withFailureHandler((err) => {
+          alert('登録エラー: ' + err);
+        })
+        .addBarcodesBatch(barcodeArray);
+    }
+    
+    function cancel() {
+      document.getElementById('confirmation').style.display = 'none';
+      html5QrCode.resume();
+    }
+  </script>
+</body>
+</html>
